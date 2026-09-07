@@ -1,0 +1,2 @@
+# Keep Supabase credentials out of GitHub
+.env
