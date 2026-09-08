@@ -181,13 +181,13 @@ else:
 # ADD READING TAB
 # -----------------------------------------------------
 
-with tab_add:
+    with tab_add:
 
-    # Display the section heading
-    st.subheader("Add Blood Pressure Reading")
+        # Display the section heading
+        st.subheader("Add Blood Pressure Reading")
 
-    # Put the three main measurements side by side
-    col1, col2, col3 = st.columns(3)
+        # Put the three main measurements side by side
+        col1, col2, col3 = st.columns(3)
 
     with col1:
         # Enter systolic pressure
