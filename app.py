@@ -905,15 +905,11 @@ else:
     with tab_dashboard:
 
         # Display the dashboard heading
-        st.subheader(
-            "Dashboard"
-        )
+        st.subheader("Dashboard")
 
-
-        # Load this user's readings
         try:
 
-            # Get all readings needed for analysis
+            # Get all readings for this user
             dashboard_response = (
                 supabase
                 .table("readings")
@@ -934,25 +930,288 @@ else:
                 .execute()
             )
 
-
-            # Convert the results into a DataFrame
+            # Convert the readings into a DataFrame
             dashboard_df = pd.DataFrame(
                 dashboard_response.data
             )
 
+            # Check whether readings exist
+            if dashboard_df.empty:
 
-            # Display the number of readings
-            st.metric(
-                "Total Readings",
-                len(dashboard_df)
-            )
+                # Tell the user there is no data yet
+                st.info(
+                    "There are not enough readings to display the dashboard yet."
+                )
 
+            else:
 
-            # Display a temporary message
-            st.info(
-                "Dashboard analysis will be added next."
-            )
+                # Convert the date column into actual dates
+                dashboard_df["reading_date"] = pd.to_datetime(
+                    dashboard_df["reading_date"]
+                )
 
+                # Convert numeric columns to numbers
+                dashboard_df["systolic"] = pd.to_numeric(
+                    dashboard_df["systolic"]
+                )
+
+                dashboard_df["diastolic"] = pd.to_numeric(
+                    dashboard_df["diastolic"]
+                )
+
+                dashboard_df["pulse"] = pd.to_numeric(
+                    dashboard_df["pulse"],
+                    errors="coerce"
+                )
+
+                # -------------------------------------------------
+                # TIME PERIOD FILTER
+                # -------------------------------------------------
+
+                # Create the dashboard period selector
+                dashboard_period = st.radio(
+                    "Time Period",
+                    [
+                        "7 Days",
+                        "30 Days",
+                        "90 Days",
+                        "All Time",
+                        "Custom"
+                    ],
+                    horizontal=True
+                )
+
+                # Set default custom dates
+                custom_start = None
+                custom_end = None
+
+                # Show date selectors when Custom is selected
+                if dashboard_period == "Custom":
+
+                    # Create two date input columns
+                    start_col, end_col = st.columns(2)
+
+                    with start_col:
+
+                        # Select the beginning of the custom range
+                        custom_start = st.date_input(
+                            "Start Date",
+                            value=dashboard_df["reading_date"].min().date(),
+                            min_value=dashboard_df["reading_date"].min().date(),
+                            max_value=dashboard_df["reading_date"].max().date()
+                        )
+
+                    with end_col:
+
+                        # Select the end of the custom range
+                        custom_end = st.date_input(
+                            "End Date",
+                            value=dashboard_df["reading_date"].max().date(),
+                            min_value=dashboard_df["reading_date"].min().date(),
+                            max_value=dashboard_df["reading_date"].max().date()
+                        )
+
+                    # Make sure the start date is not after the end date
+                    if custom_start > custom_end:
+
+                        st.error(
+                            "Start Date cannot be after End Date."
+                        )
+
+                        st.stop()
+
+                # Get the most recent reading date
+                latest_date = dashboard_df["reading_date"].max()
+
+                # Filter the data based on the selected period
+                if dashboard_period == "7 Days":
+
+                    start_date = latest_date - pd.Timedelta(days=6)
+
+                    filtered_df = dashboard_df[
+                        dashboard_df["reading_date"] >= start_date
+                    ]
+
+                elif dashboard_period == "30 Days":
+
+                    start_date = latest_date - pd.Timedelta(days=29)
+
+                    filtered_df = dashboard_df[
+                        dashboard_df["reading_date"] >= start_date
+                    ]
+
+                elif dashboard_period == "90 Days":
+
+                    start_date = latest_date - pd.Timedelta(days=89)
+
+                    filtered_df = dashboard_df[
+                        dashboard_df["reading_date"] >= start_date
+                    ]
+
+                elif dashboard_period == "Custom":
+
+                    # Convert the selected dates to pandas timestamps
+                    start_date = pd.Timestamp(custom_start)
+                    end_date = pd.Timestamp(custom_end)
+
+                    # Filter between the selected start and end dates
+                    filtered_df = dashboard_df[
+                        (dashboard_df["reading_date"] >= start_date)
+                        & (dashboard_df["reading_date"] <= end_date)
+                    ]
+
+                else:
+
+                    # Use the complete dataset
+                    filtered_df = dashboard_df.copy()
+
+                # -------------------------------------------------
+                # SUMMARY METRICS
+                # -------------------------------------------------
+
+                # Calculate average systolic
+                average_systolic = filtered_df[
+                    "systolic"
+                ].mean()
+
+                # Calculate average diastolic
+                average_diastolic = filtered_df[
+                    "diastolic"
+                ].mean()
+
+                # Calculate average pulse
+                average_pulse = filtered_df[
+                    "pulse"
+                ].mean()
+
+                # Count readings
+                reading_count = len(filtered_df)
+
+                # Create the first row of metrics
+                metric1, metric2 = st.columns(2)
+
+                with metric1:
+
+                    # Display average blood pressure
+                    st.metric(
+                        "Average BP",
+                        f"{average_systolic:.0f} / "
+                        f"{average_diastolic:.0f}"
+                    )
+
+                with metric2:
+
+                    # Display average pulse
+                    st.metric(
+                        "Average Pulse",
+                        f"{average_pulse:.0f}"
+                    )
+
+                # Create the second row of metrics
+                metric3, metric4 = st.columns(2)
+
+                with metric3:
+
+                    # Display the number of readings
+                    st.metric(
+                        "Readings",
+                        reading_count
+                    )
+
+                with metric4:
+
+                    # Display the most recent date
+                    st.metric(
+                        "Latest Date",
+                        latest_date.strftime("%m/%d/%Y")
+                    )
+
+                # Add spacing
+                st.write("")
+
+                # -------------------------------------------------
+                # BLOOD PRESSURE TREND
+                # -------------------------------------------------
+
+                # Display the chart heading
+                st.markdown("### Blood Pressure Trend")
+
+                # Create a chart DataFrame
+                chart_df = filtered_df[
+                    [
+                        "reading_date",
+                        "systolic",
+                        "diastolic"
+                    ]
+                ].copy()
+
+                # Group multiple readings from the same day
+                # so the chart shows the daily average
+                chart_df = (
+                    chart_df
+                    .groupby("reading_date", as_index=True)
+                    [
+                        [
+                            "systolic",
+                            "diastolic"
+                        ]
+                    ]
+                    .mean()
+                )
+
+                # Display the blood pressure chart
+                st.line_chart(
+                    chart_df,
+                    width="stretch"
+                )
+
+                # -------------------------------------------------
+                # PULSE TREND
+                # -------------------------------------------------
+
+                # Display the pulse chart heading
+                st.markdown("### Pulse Trend")
+
+                # Create the pulse chart data
+                pulse_df = filtered_df[
+                    [
+                        "reading_date",
+                        "pulse"
+                    ]
+                ].copy()
+
+                # Remove rows where pulse is missing
+                pulse_df = pulse_df.dropna(
+                    subset=["pulse"]
+                )
+
+                # Group multiple readings from the same day
+                pulse_df = (
+                    pulse_df
+                    .groupby("reading_date", as_index=True)
+                    [
+                        "pulse"
+                    ]
+                    .mean()
+                )
+
+                # Display the pulse chart
+                st.line_chart(
+                    pulse_df,
+                    width="stretch"
+                )
+
+                # -------------------------------------------------
+                # DATA RANGE INFORMATION
+                # -------------------------------------------------
+
+                # Display the date range being analyzed
+                st.caption(
+                    f"Showing {len(filtered_df)} readings from "
+                    f"{filtered_df['reading_date'].min().strftime('%m/%d/%Y')} "
+                    f"through "
+                    f"{filtered_df['reading_date'].max().strftime('%m/%d/%Y')}"
+                )
 
         except Exception as e:
 
