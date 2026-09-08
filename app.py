@@ -177,17 +177,20 @@ else:
     )
 
 
-    # -----------------------------------------------------
-    # ADD READING TAB
-    # -----------------------------------------------------
+   # -----------------------------------------------------
+# ADD READING TAB
+# -----------------------------------------------------
 
-    with tab_add:
+with tab_add:
 
-        # Display the section heading
-        st.subheader("Add Blood Pressure Reading")
+    # Display the section heading
+    st.subheader("Add Blood Pressure Reading")
 
+    # Put the three main measurements side by side
+    col1, col2, col3 = st.columns(3)
 
-        # Create the blood pressure input fields
+    with col1:
+        # Enter systolic pressure
         systolic = st.number_input(
             "Systolic",
             min_value=50,
@@ -196,7 +199,8 @@ else:
             step=1
         )
 
-
+    with col2:
+        # Enter diastolic pressure
         diastolic = st.number_input(
             "Diastolic",
             min_value=30,
@@ -205,7 +209,8 @@ else:
             step=1
         )
 
-
+    with col3:
+        # Enter pulse
         pulse = st.number_input(
             "Pulse",
             min_value=30,
@@ -214,84 +219,82 @@ else:
             step=1
         )
 
+    # Add some spacing
+    st.write("")
 
-        # Let the user select the reading period
-        period = st.selectbox(
-            "Reading Period",
-            [
-                "AM",
-                "PM",
-                "Pre-bed"
-            ]
-        )
+    # Remember the last period selected
+    if "last_period" not in st.session_state:
+        st.session_state.last_period = "AM"
 
+    # Select the reading period
+    period = st.radio(
+        "Reading Period",
+        ["AM", "PM", "Pre-bed"],
+        index=["AM", "PM", "Pre-bed"].index(
+            st.session_state.last_period
+        ),
+        horizontal=True
+    )
 
-        # Date of the reading
-        reading_date = st.date_input(
-            "Reading Date",
-            value=date.today()
-        )
+    # Remember the current selection
+    st.session_state.last_period = period
 
+    # Use today's date automatically
+    reading_date = st.date_input(
+        "Reading Date",
+        value=date.today()
+    )
 
-        # Time of the reading
-        reading_time = st.time_input(
-            "Reading Time",
-            value=datetime.now().time()
-        )
+    # Use the current time automatically
+    reading_time = st.time_input(
+        "Reading Time",
+        value=datetime.now().time().replace(second=0, microsecond=0)
+    )
 
+    # Optional notes
+    notes = st.text_area(
+        "Notes",
+        placeholder="Optional notes..."
+    )
 
-        # Optional notes
-        notes = st.text_area(
-            "Notes",
-            placeholder="Optional notes about this reading..."
-        )
+    # Save the reading
+    if st.button(
+        "Save Reading",
+        type="primary",
+        width="stretch"
+    ):
 
+        try:
 
-        # Create the save button
-        if st.button(
-            "Save Reading",
-            type="primary",
-            use_container_width=True
-        ):
+            # Build the record to send to Supabase
+            reading = {
+                "user_id": user_id,
+                "reading_date": reading_date.isoformat(),
+                "reading_time": reading_time.strftime("%H:%M:%S"),
+                "systolic": int(systolic),
+                "diastolic": int(diastolic),
+                "pulse": int(pulse),
+                "period": period,
+                "notes": notes.strip() if notes else None
+            }
 
-            try:
+            # Insert the reading into Supabase
+            supabase.table("readings").insert(
+                reading
+            ).execute()
 
-                # Build the record to send to Supabase
-                reading = {
-                    "user_id": user_id,
-                    "reading_date": reading_date.isoformat(),
-                    "reading_time": reading_time.strftime("%H:%M:%S"),
-                    "systolic": int(systolic),
-                    "diastolic": int(diastolic),
-                    "pulse": int(pulse),
-                    "period": period,
-                    "notes": notes.strip() if notes else None
-                }
+            # Tell the user the reading was saved
+            st.success("Reading saved successfully.")
 
+            # Refresh the app so the new reading appears immediately
+            st.rerun()
 
-                # Insert the reading into Supabase
-                supabase.table("readings").insert(
-                    reading
-                ).execute()
+        except Exception as e:
 
-
-                # Tell the user the reading was saved
-                st.success(
-                    "Reading saved successfully."
-                )
-
-
-                # Tell Streamlit to refresh the page
-                st.rerun()
-
-
-            except Exception as e:
-
-                # Display any database error
-                st.error(
-                    f"Could not save reading: {e}"
-                )
-
+            # Display any database error
+            st.error(
+                f"Could not save reading: {e}"
+            )
 
     # -----------------------------------------------------
     # HISTORY TAB
