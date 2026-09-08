@@ -1,74 +1,113 @@
 # Import the libraries we need
 import os
-from datetime import date, datetime, time
+from datetime import date, datetime
 
+import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client
 
+
+# ---------------------------------------------------------
+# CONFIGURATION
+# ---------------------------------------------------------
+
 # Load the variables from the .env file
 load_dotenv()
+
 
 # Get our Supabase connection information
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Make sure the connection information exists
+
+# Check that the connection information exists
 if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error("Supabase connection information is missing from the .env file.")
+    st.error("Supabase connection information is missing.")
     st.stop()
 
+
 # Connect to Supabase
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_KEY
+)
 
-# Restore the logged-in Supabase session after each Streamlit rerun
-session = st.session_state.get("session")
 
-if session is not None:
-    supabase.auth.set_session(
-        session.access_token,
-        session.refresh_token
-    )
-
-# Set up the Streamlit page
+# Configure the Streamlit page
 st.set_page_config(
     page_title="Blood Pressure Tracker",
     page_icon="❤️",
     layout="centered"
 )
 
+
 # ---------------------------------------------------------
-# LOGIN
+# RESTORE LOGIN SESSION
 # ---------------------------------------------------------
 
-# Get the current session
+# Get the saved session
 session = st.session_state.get("session")
 
-# Show the login screen if the user is not logged in
+
+# Restore the Supabase authentication session after reruns
+if session is not None:
+
+    try:
+        supabase.auth.set_session(
+            session.access_token,
+            session.refresh_token
+        )
+
+    except Exception:
+        # Clear an invalid/expired session
+        st.session_state.pop("session", None)
+        session = None
+
+
+# ---------------------------------------------------------
+# LOGIN SCREEN
+# ---------------------------------------------------------
+
+# Only show the login screen when nobody is logged in
 if session is None:
 
     # Display the application title
     st.title("Blood Pressure Tracker")
 
-    # Display the login heading
+    # Display a simple login heading
     st.subheader("Login")
 
     # Ask for the user's email
-    email = st.text_input("Email")
+    email = st.text_input(
+        "Email"
+    )
 
     # Ask for the user's password
-    password = st.text_input("Password", type="password")
+    password = st.text_input(
+        "Password",
+        type="password"
+    )
 
     # Create the login button
-    if st.button("Log In"):
+    if st.button(
+        "Log In",
+        type="primary",
+        use_container_width=True
+    ):
 
         # Make sure both fields were entered
         if not email or not password:
-            st.error("Please enter your email and password.")
+
+            st.error(
+                "Please enter your email and password."
+            )
 
         else:
+
             try:
-                # Attempt to log the user into Supabase
+
+                # Attempt to authenticate the user
                 response = supabase.auth.sign_in_with_password(
                     {
                         "email": email,
@@ -83,11 +122,15 @@ if session is None:
                 st.rerun()
 
             except Exception:
-                # Show a simple login error
-                st.error("Login failed. Please check the email and password.")
+
+                # Display a simple login error
+                st.error(
+                    "Login failed. Please check your email and password."
+                )
+
 
 # ---------------------------------------------------------
-# BLOOD PRESSURE TRACKER
+# MAIN APPLICATION
 # ---------------------------------------------------------
 
 else:
@@ -95,148 +138,306 @@ else:
     # Get the logged-in user's ID
     user_id = session.user.id
 
+
     # Display the application title
     st.title("Blood Pressure Tracker")
 
-    # Display a logout button
-    if st.button("Log Out"):
+
+    # Display the logout button
+    if st.button(
+        "Log Out",
+        use_container_width=True
+    ):
+
         # Sign out of Supabase
         supabase.auth.sign_out()
 
-        # Remove the saved session
+        # Clear the local session
         st.session_state.pop("session", None)
 
-        # Refresh the application
+        # Refresh the app
         st.rerun()
+
 
     # Add a divider
     st.divider()
 
-    # Display the Add Reading heading
-    st.subheader("Add Blood Pressure Reading")
 
-    # Create the blood pressure input fields
-    systolic = st.number_input(
-        "Systolic",
-        min_value=50,
-        max_value=300,
-        value=120,
-        step=1
-    )
+    # -----------------------------------------------------
+    # NAVIGATION
+    # -----------------------------------------------------
 
-    diastolic = st.number_input(
-        "Diastolic",
-        min_value=30,
-        max_value=200,
-        value=80,
-        step=1
-    )
-
-    pulse = st.number_input(
-        "Pulse",
-        min_value=30,
-        max_value=250,
-        value=70,
-        step=1
-    )
-
-    # Let the user select AM, PM, or Pre-bed
-    period = st.selectbox(
-        "Reading Period",
+    # Create the main navigation tabs
+    tab_add, tab_history, tab_dashboard = st.tabs(
         [
-            "AM",
-            "PM",
-            "Pre-bed"
+            "Add Reading",
+            "History",
+            "Dashboard"
         ]
     )
 
-    # Date of the reading
-    reading_date = st.date_input(
-        "Reading Date",
-        value=date.today()
-    )
 
-    # Time of the reading
-    reading_time = st.time_input(
-        "Reading Time",
-        value=datetime.now().time()
-    )
+    # -----------------------------------------------------
+    # ADD READING TAB
+    # -----------------------------------------------------
 
-    # Optional notes
-    notes = st.text_area(
-        "Notes",
-        placeholder="Optional notes about this reading..."
-    )
+    with tab_add:
 
-    # Save the reading
-    if st.button("Save Reading", type="primary"):
+        # Display the section heading
+        st.subheader("Add Blood Pressure Reading")
+
+
+        # Create the blood pressure input fields
+        systolic = st.number_input(
+            "Systolic",
+            min_value=50,
+            max_value=300,
+            value=120,
+            step=1
+        )
+
+
+        diastolic = st.number_input(
+            "Diastolic",
+            min_value=30,
+            max_value=200,
+            value=80,
+            step=1
+        )
+
+
+        pulse = st.number_input(
+            "Pulse",
+            min_value=30,
+            max_value=250,
+            value=70,
+            step=1
+        )
+
+
+        # Let the user select the reading period
+        period = st.selectbox(
+            "Reading Period",
+            [
+                "AM",
+                "PM",
+                "Pre-bed"
+            ]
+        )
+
+
+        # Date of the reading
+        reading_date = st.date_input(
+            "Reading Date",
+            value=date.today()
+        )
+
+
+        # Time of the reading
+        reading_time = st.time_input(
+            "Reading Time",
+            value=datetime.now().time()
+        )
+
+
+        # Optional notes
+        notes = st.text_area(
+            "Notes",
+            placeholder="Optional notes about this reading..."
+        )
+
+
+        # Create the save button
+        if st.button(
+            "Save Reading",
+            type="primary",
+            use_container_width=True
+        ):
+
+            try:
+
+                # Build the record to send to Supabase
+                reading = {
+                    "user_id": user_id,
+                    "reading_date": reading_date.isoformat(),
+                    "reading_time": reading_time.strftime("%H:%M:%S"),
+                    "systolic": int(systolic),
+                    "diastolic": int(diastolic),
+                    "pulse": int(pulse),
+                    "period": period,
+                    "notes": notes.strip() if notes else None
+                }
+
+
+                # Insert the reading into Supabase
+                supabase.table("readings").insert(
+                    reading
+                ).execute()
+
+
+                # Tell the user the reading was saved
+                st.success(
+                    "Reading saved successfully."
+                )
+
+
+                # Tell Streamlit to refresh the page
+                st.rerun()
+
+
+            except Exception as e:
+
+                # Display any database error
+                st.error(
+                    f"Could not save reading: {e}"
+                )
+
+
+    # -----------------------------------------------------
+    # HISTORY TAB
+    # -----------------------------------------------------
+
+    with tab_history:
+
+        # Display the history heading
+        st.subheader("Reading History")
+
 
         try:
 
-            # Build the reading we are going to send to Supabase
-            reading = {
-                "user_id": user_id,
-                "reading_date": reading_date.isoformat(),
-                "reading_time": reading_time.strftime("%H:%M:%S"),
-                "systolic": int(systolic),
-                "diastolic": int(diastolic),
-                "pulse": int(pulse),
-                "period": period,
-                "notes": notes
-            }
+            # Get this user's readings
+            history_response = (
+                supabase
+                .table("readings")
+                .select(
+                    "id, reading_date, reading_time, "
+                    "systolic, diastolic, pulse, period, notes"
+                )
+                .eq("user_id", user_id)
+                .order(
+                    "reading_date",
+                    desc=True
+                )
+                .order(
+                    "reading_time",
+                    desc=True
+                )
+                .execute()
+            )
 
-            # Insert the reading into the database
-            response = supabase.table("readings").insert(reading).execute()
 
-            # Tell the user the reading was saved
-            st.success("Reading saved successfully.")
+            # Get the returned data
+            readings = history_response.data
+
+
+            # Display the readings when they exist
+            if readings:
+
+                # Convert the readings into a DataFrame
+                history_df = pd.DataFrame(
+                    readings
+                )
+
+
+                # Rename columns for display
+                history_df = history_df.rename(
+                    columns={
+                        "reading_date": "Date",
+                        "reading_time": "Time",
+                        "systolic": "Systolic",
+                        "diastolic": "Diastolic",
+                        "pulse": "Pulse",
+                        "period": "Period",
+                        "notes": "Notes"
+                    }
+                )
+
+
+                # Drop the internal database ID
+                if "id" in history_df.columns:
+                    history_df = history_df.drop(
+                        columns=["id"]
+                    )
+
+
+                # Display the history table
+                st.dataframe(
+                    history_df,
+                    width="stretch",
+                    hide_index=True
+                )
+
+
+            else:
+
+                # Tell the user that no readings exist
+                st.info(
+                    "No readings have been recorded yet."
+                )
+
 
         except Exception as e:
 
-            # Display the error if something went wrong
-            st.error(f"Could not save reading: {e}")
+            # Display any history error
+            st.error(
+                f"Could not load reading history: {e}"
+            )
 
-# ---------------------------------------------------------
-# READING HISTORY
-# ---------------------------------------------------------
 
-# Add a divider
-st.divider()
+    # -----------------------------------------------------
+    # DASHBOARD TAB
+    # -----------------------------------------------------
 
-# Display the history heading
-st.subheader("Reading History")
+    with tab_dashboard:
 
-try:
-    # Retrieve this user's readings from Supabase
-    history_response = (
-        supabase
-        .table("readings")
-        .select(
-            "id, reading_date, reading_time, systolic, diastolic, "
-            "pulse, period, notes"
-        )
-        .eq("user_id", user_id)
-        .order("reading_date", desc=True)
-        .order("reading_time", desc=True)
-        .execute()
-    )
+        # Display the dashboard heading
+        st.subheader("Dashboard")
 
-    # Convert the results into a list
-    readings = history_response.data
 
-    # Display the readings if any exist
-    if readings:
-        st.dataframe(
-            readings,
-            use_container_width=True,
-            hide_index=True
-        )
+        # Load the user's readings for future dashboard work
+        try:
 
-    else:
-        # Tell the user if there are no readings yet
-        st.info("No readings have been recorded yet.")
+            # Get all readings for this user
+            dashboard_response = (
+                supabase
+                .table("readings")
+                .select(
+                    "reading_date, reading_time, "
+                    "systolic, diastolic, pulse"
+                )
+                .eq("user_id", user_id)
+                .order(
+                    "reading_date"
+                )
+                .order(
+                    "reading_time"
+                )
+                .execute()
+            )
 
-except Exception as e:
 
-    # Display an error if the history could not be loaded
-    st.error(f"Could not load reading history: {e}")
+            # Convert the results into a DataFrame
+            dashboard_df = pd.DataFrame(
+                dashboard_response.data
+            )
+
+
+            # Display the number of readings
+            st.metric(
+                "Total Readings",
+                len(dashboard_df)
+            )
+
+
+            # Show a placeholder until we build the dashboard
+            st.info(
+                "Dashboard analysis will be added next."
+            )
+
+
+        except Exception as e:
+
+            # Display any dashboard error
+            st.error(
+                f"Could not load dashboard data: {e}"
+            )
