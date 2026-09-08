@@ -46,7 +46,7 @@ st.set_page_config(
 # RESTORE LOGIN SESSION
 # ---------------------------------------------------------
 
-# Get the saved session
+# Get the saved login session
 session = st.session_state.get("session")
 
 
@@ -54,14 +54,20 @@ session = st.session_state.get("session")
 if session is not None:
 
     try:
+
         supabase.auth.set_session(
             session.access_token,
             session.refresh_token
         )
 
     except Exception:
-        # Clear an invalid/expired session
-        st.session_state.pop("session", None)
+
+        # Clear an invalid or expired session
+        st.session_state.pop(
+            "session",
+            None
+        )
+
         session = None
 
 
@@ -69,13 +75,13 @@ if session is not None:
 # LOGIN SCREEN
 # ---------------------------------------------------------
 
-# Only show the login screen when nobody is logged in
+# Only show this section when the user is not logged in
 if session is None:
 
     # Display the application title
     st.title("Blood Pressure Tracker")
 
-    # Display a simple login heading
+    # Display the login heading
     st.subheader("Login")
 
     # Ask for the user's email
@@ -93,7 +99,7 @@ if session is None:
     if st.button(
         "Log In",
         type="primary",
-        use_container_width=True
+        width="stretch"
     ):
 
         # Make sure both fields were entered
@@ -118,14 +124,14 @@ if session is None:
                 # Save the successful session
                 st.session_state.session = response.session
 
-                # Refresh the app
+                # Refresh the application
                 st.rerun()
 
             except Exception:
 
                 # Display a simple login error
                 st.error(
-                    "Login failed. Please check your email and password."
+                    "Login failed. Please check the email and password."
                 )
 
 
@@ -139,27 +145,34 @@ else:
     user_id = session.user.id
 
 
+    # -----------------------------------------------------
+    # APPLICATION HEADER
+    # -----------------------------------------------------
+
     # Display the application title
     st.title("Blood Pressure Tracker")
 
 
-    # Display the logout button
+    # Create the logout button
     if st.button(
         "Log Out",
-        use_container_width=True
+        width="stretch"
     ):
 
         # Sign out of Supabase
         supabase.auth.sign_out()
 
-        # Clear the local session
-        st.session_state.pop("session", None)
+        # Remove the saved session
+        st.session_state.pop(
+            "session",
+            None
+        )
 
-        # Refresh the app
+        # Refresh the application
         st.rerun()
 
 
-    # Add a divider
+    # Add a divider below the header
     st.divider()
 
 
@@ -167,7 +180,7 @@ else:
     # NAVIGATION
     # -----------------------------------------------------
 
-    # Create the main navigation tabs
+    # Create the main application tabs
     tab_add, tab_history, tab_dashboard = st.tabs(
         [
             "Add Reading",
@@ -177,134 +190,544 @@ else:
     )
 
 
-   # -----------------------------------------------------
-# ADD READING TAB
-# -----------------------------------------------------
+    # =====================================================
+    # ADD READING TAB
+    # =====================================================
 
     with tab_add:
 
         # Display the section heading
-        st.subheader("Add Blood Pressure Reading")
+        st.subheader(
+            "Add Blood Pressure Reading"
+        )
+
 
         # Put the three main measurements side by side
         col1, col2, col3 = st.columns(3)
 
-    with col1:
-        # Enter systolic pressure
-        systolic = st.number_input(
-            "Systolic",
-            min_value=50,
-            max_value=300,
-            value=120,
-            step=1
-        )
 
-    with col2:
-        # Enter diastolic pressure
-        diastolic = st.number_input(
-            "Diastolic",
-            min_value=30,
-            max_value=200,
-            value=80,
-            step=1
-        )
+        # Systolic input
+        with col1:
 
-    with col3:
-        # Enter pulse
-        pulse = st.number_input(
-            "Pulse",
-            min_value=30,
-            max_value=250,
-            value=70,
-            step=1
-        )
-
-    # Add some spacing
-    st.write("")
-
-    # Remember the last period selected
-    if "last_period" not in st.session_state:
-        st.session_state.last_period = "AM"
-
-    # Select the reading period
-    period = st.radio(
-        "Reading Period",
-        ["AM", "PM", "Pre-bed"],
-        index=["AM", "PM", "Pre-bed"].index(
-            st.session_state.last_period
-        ),
-        horizontal=True
-    )
-
-    # Remember the current selection
-    st.session_state.last_period = period
-
-    # Use today's date automatically
-    reading_date = st.date_input(
-        "Reading Date",
-        value=date.today()
-    )
-
-    # Use the current time automatically
-    reading_time = st.time_input(
-        "Reading Time",
-        value=datetime.now().time().replace(second=0, microsecond=0)
-    )
-
-    # Optional notes
-    notes = st.text_area(
-        "Notes",
-        placeholder="Optional notes..."
-    )
-
-    # Save the reading
-    if st.button(
-        "Save Reading",
-        type="primary",
-        width="stretch"
-    ):
-
-        try:
-
-            # Build the record to send to Supabase
-            reading = {
-                "user_id": user_id,
-                "reading_date": reading_date.isoformat(),
-                "reading_time": reading_time.strftime("%H:%M:%S"),
-                "systolic": int(systolic),
-                "diastolic": int(diastolic),
-                "pulse": int(pulse),
-                "period": period,
-                "notes": notes.strip() if notes else None
-            }
-
-            # Insert the reading into Supabase
-            supabase.table("readings").insert(
-                reading
-            ).execute()
-
-            # Tell the user the reading was saved
-            st.success("Reading saved successfully.")
-
-            # Refresh the app so the new reading appears immediately
-            st.rerun()
-
-        except Exception as e:
-
-            # Display any database error
-            st.error(
-                f"Could not save reading: {e}"
+            systolic = st.number_input(
+                "Systolic",
+                min_value=50,
+                max_value=300,
+                value=120,
+                step=1
             )
 
-    # -----------------------------------------------------
+
+        # Diastolic input
+        with col2:
+
+            diastolic = st.number_input(
+                "Diastolic",
+                min_value=30,
+                max_value=200,
+                value=80,
+                step=1
+            )
+
+
+        # Pulse input
+        with col3:
+
+            pulse = st.number_input(
+                "Pulse",
+                min_value=30,
+                max_value=250,
+                value=70,
+                step=1
+            )
+
+
+        # Add some spacing
+        st.write("")
+
+
+        # -------------------------------------------------
+        # READING PERIOD
+        # -------------------------------------------------
+
+        # Remember the last period selected
+        if "last_period" not in st.session_state:
+
+            st.session_state.last_period = "AM"
+
+
+        # Reading period selector
+        period = st.radio(
+            "Reading Period",
+            [
+                "AM",
+                "PM",
+                "Pre-bed"
+            ],
+            index=[
+                "AM",
+                "PM",
+                "Pre-bed"
+            ].index(
+                st.session_state.last_period
+            ),
+            horizontal=True
+        )
+
+
+        # Remember the current selection
+        st.session_state.last_period = period
+
+
+        # -------------------------------------------------
+        # DATE AND TIME
+        # -------------------------------------------------
+
+        # Use today's date automatically
+        reading_date = st.date_input(
+            "Reading Date",
+            value=date.today()
+        )
+
+
+        # Use the current time automatically
+        reading_time = st.time_input(
+            "Reading Time",
+            value=datetime.now().time().replace(
+                second=0,
+                microsecond=0
+            )
+        )
+
+
+        # -------------------------------------------------
+        # NOTES
+        # -------------------------------------------------
+
+        # Optional notes
+        notes = st.text_area(
+            "Notes",
+            placeholder="Optional notes..."
+        )
+
+
+        # -------------------------------------------------
+        # SAVE READING
+        # -------------------------------------------------
+
+        # Create the save button
+        if st.button(
+            "Save Reading",
+            type="primary",
+            width="stretch"
+        ):
+
+            try:
+
+                # Build the reading record
+                reading = {
+                    "user_id": user_id,
+                    "reading_date": reading_date.isoformat(),
+                    "reading_time": reading_time.strftime(
+                        "%H:%M:%S"
+                    ),
+                    "systolic": int(systolic),
+                    "diastolic": int(diastolic),
+                    "pulse": int(pulse),
+                    "period": period,
+                    "notes": notes.strip() if notes else None
+                }
+
+
+                # Insert the reading into Supabase
+                supabase.table(
+                    "readings"
+                ).insert(
+                    reading
+                ).execute()
+
+
+                # Show a success message
+                st.success(
+                    "Reading saved successfully."
+                )
+
+
+                # Refresh the application
+                st.rerun()
+
+
+            except Exception as e:
+
+                # Display any database error
+                st.error(
+                    f"Could not save reading: {e}"
+                )
+
+
+    # =====================================================
     # HISTORY TAB
-    # -----------------------------------------------------
+    # =====================================================
 
     with tab_history:
 
         # Display the history heading
-        st.subheader("Reading History")
+        st.subheader(
+            "Reading History"
+        )
 
+
+        # -------------------------------------------------
+        # CHECK FOR ACTIVE EDIT
+        # -------------------------------------------------
+
+        if "editing_reading" in st.session_state:
+
+            # Get the reading currently being edited
+            editing_reading = st.session_state.editing_reading
+
+
+            # Display the editing heading
+            st.markdown(
+                "### Edit Reading"
+            )
+
+
+            # Create the edit form
+            with st.form(
+                "edit_reading_form"
+            ):
+
+                # Create the three measurement columns
+                edit_col1, edit_col2, edit_col3 = st.columns(3)
+
+
+                # Systolic
+                with edit_col1:
+
+                    edit_systolic = st.number_input(
+                        "Systolic",
+                        min_value=50,
+                        max_value=300,
+                        value=int(
+                            editing_reading["systolic"]
+                        ),
+                        step=1,
+                        key="edit_systolic"
+                    )
+
+
+                # Diastolic
+                with edit_col2:
+
+                    edit_diastolic = st.number_input(
+                        "Diastolic",
+                        min_value=30,
+                        max_value=200,
+                        value=int(
+                            editing_reading["diastolic"]
+                        ),
+                        step=1,
+                        key="edit_diastolic"
+                    )
+
+
+                # Pulse
+                with edit_col3:
+
+                    edit_pulse = st.number_input(
+                        "Pulse",
+                        min_value=30,
+                        max_value=250,
+                        value=int(
+                            editing_reading["pulse"]
+                        ) if editing_reading["pulse"] is not None else 70,
+                        step=1,
+                        key="edit_pulse"
+                    )
+
+
+                # Get the current period
+                current_period = editing_reading["period"]
+
+
+                # Find the correct index
+                if current_period in [
+                    "AM",
+                    "PM",
+                    "Pre-bed"
+                ]:
+
+                    period_index = [
+                        "AM",
+                        "PM",
+                        "Pre-bed"
+                    ].index(
+                        current_period
+                    )
+
+                else:
+
+                    period_index = 0
+
+
+                # Edit period
+                edit_period = st.selectbox(
+                    "Reading Period",
+                    [
+                        "AM",
+                        "PM",
+                        "Pre-bed"
+                    ],
+                    index=period_index,
+                    key="edit_period"
+                )
+
+
+                # Edit date
+                edit_date = st.date_input(
+                    "Reading Date",
+                    value=pd.to_datetime(
+                        editing_reading["reading_date"]
+                    ).date(),
+                    key="edit_date"
+                )
+
+
+                # Handle existing time
+                if editing_reading["reading_time"]:
+
+                    existing_time_text = (
+                        editing_reading["reading_time"]
+                    )
+
+                    existing_time = datetime.strptime(
+                        existing_time_text,
+                        "%H:%M:%S"
+                    ).time()
+
+                else:
+
+                    existing_time = datetime.now().time().replace(
+                        second=0,
+                        microsecond=0
+                    )
+
+
+                # Edit time
+                edit_time = st.time_input(
+                    "Reading Time",
+                    value=existing_time,
+                    key="edit_time"
+                )
+
+
+                # Edit notes
+                edit_notes = st.text_area(
+                    "Notes",
+                    value=editing_reading["notes"] or "",
+                    key="edit_notes"
+                )
+
+
+                # Create the form buttons
+                save_edit, cancel_edit = st.columns(2)
+
+
+                with save_edit:
+
+                    # Save the edited reading
+                    save_edit_button = st.form_submit_button(
+                        "Save Changes",
+                        type="primary",
+                        width="stretch"
+                    )
+
+
+                with cancel_edit:
+
+                    # Cancel the edit
+                    cancel_edit_button = st.form_submit_button(
+                        "Cancel",
+                        width="stretch"
+                    )
+
+
+                # Handle the Save Changes button
+                if save_edit_button:
+
+                    try:
+
+                        # Create the updated reading
+                        updated_reading = {
+                            "reading_date": edit_date.isoformat(),
+                            "reading_time": edit_time.strftime(
+                                "%H:%M:%S"
+                            ),
+                            "systolic": int(edit_systolic),
+                            "diastolic": int(edit_diastolic),
+                            "pulse": int(edit_pulse),
+                            "period": edit_period,
+                            "notes": edit_notes.strip() if edit_notes else None
+                        }
+
+
+                        # Update only this user's reading
+                        supabase.table(
+                            "readings"
+                        ).update(
+                            updated_reading
+                        ).eq(
+                            "id",
+                            editing_reading["id"]
+                        ).eq(
+                            "user_id",
+                            user_id
+                        ).execute()
+
+
+                        # Remove the active edit
+                        st.session_state.pop(
+                            "editing_reading",
+                            None
+                        )
+
+
+                        # Show success message
+                        st.success(
+                            "Reading updated successfully."
+                        )
+
+
+                        # Refresh the app
+                        st.rerun()
+
+
+                    except Exception as e:
+
+                        # Display the update error
+                        st.error(
+                            f"Could not update reading: {e}"
+                        )
+
+
+                # Handle the Cancel button
+                if cancel_edit_button:
+
+                    # Remove the active edit
+                    st.session_state.pop(
+                        "editing_reading",
+                        None
+                    )
+
+
+                    # Refresh the application
+                    st.rerun()
+
+
+            # Divider between edit form and history
+            st.divider()
+
+
+        # -------------------------------------------------
+        # CHECK FOR DELETE CONFIRMATION
+        # -------------------------------------------------
+
+        if "deleting_reading" in st.session_state:
+
+            # Get the reading awaiting deletion
+            deleting_reading = st.session_state.deleting_reading
+
+
+            # Display the confirmation message
+            st.warning(
+                f'Are you sure you want to delete '
+                f'{deleting_reading["systolic"]}/'
+                f'{deleting_reading["diastolic"]} '
+                f'from {deleting_reading["reading_date"]}?'
+            )
+
+
+            # Create the confirmation buttons
+            confirm_col, cancel_col = st.columns(2)
+
+
+            with confirm_col:
+
+                # Confirm the deletion
+                if st.button(
+                    "Yes, Delete",
+                    type="primary",
+                    width="stretch",
+                    key="confirm_delete"
+                ):
+
+                    try:
+
+                        # Delete only this user's selected reading
+                        supabase.table(
+                            "readings"
+                        ).delete().eq(
+                            "id",
+                            deleting_reading["id"]
+                        ).eq(
+                            "user_id",
+                            user_id
+                        ).execute()
+
+
+                        # Clear the pending deletion
+                        st.session_state.pop(
+                            "deleting_reading",
+                            None
+                        )
+
+
+                        # Show success message
+                        st.success(
+                            "Reading deleted successfully."
+                        )
+
+
+                        # Refresh the app
+                        st.rerun()
+
+
+                    except Exception as e:
+
+                        # Display any deletion error
+                        st.error(
+                            f"Could not delete reading: {e}"
+                        )
+
+
+            with cancel_col:
+
+                # Cancel the deletion
+                if st.button(
+                    "Cancel",
+                    width="stretch",
+                    key="cancel_delete"
+                ):
+
+                    # Clear the pending deletion
+                    st.session_state.pop(
+                        "deleting_reading",
+                        None
+                    )
+
+
+                    # Refresh the application
+                    st.rerun()
+
+
+            # Stop displaying the normal history temporarily
+            st.divider()
+
+
+        # -------------------------------------------------
+        # LOAD HISTORY
+        # -------------------------------------------------
 
         try:
 
@@ -316,7 +739,10 @@ else:
                     "id, reading_date, reading_time, "
                     "systolic, diastolic, pulse, period, notes"
                 )
-                .eq("user_id", user_id)
+                .eq(
+                    "user_id",
+                    user_id
+                )
                 .order(
                     "reading_date",
                     desc=True
@@ -329,51 +755,136 @@ else:
             )
 
 
-            # Get the returned data
+            # Get the readings
             readings = history_response.data
 
 
-            # Display the readings when they exist
+            # Check whether readings exist
             if readings:
 
-                # Convert the readings into a DataFrame
-                history_df = pd.DataFrame(
-                    readings
-                )
+                # Display each reading as an expandable item
+                for reading in readings:
+
+                    # Get the reading ID
+                    reading_id = reading["id"]
 
 
-                # Rename columns for display
-                history_df = history_df.rename(
-                    columns={
-                        "reading_date": "Date",
-                        "reading_time": "Time",
-                        "systolic": "Systolic",
-                        "diastolic": "Diastolic",
-                        "pulse": "Pulse",
-                        "period": "Period",
-                        "notes": "Notes"
-                    }
-                )
-
-
-                # Drop the internal database ID
-                if "id" in history_df.columns:
-                    history_df = history_df.drop(
-                        columns=["id"]
+                    # Build the display title
+                    pulse_text = (
+                        str(reading["pulse"])
+                        if reading["pulse"] is not None
+                        else "N/A"
                     )
 
 
-                # Display the history table
-                st.dataframe(
-                    history_df,
-                    width="stretch",
-                    hide_index=True
-                )
+                    reading_title = (
+                        f'{reading["reading_date"]} — '
+                        f'{reading["systolic"]}/'
+                        f'{reading["diastolic"]} '
+                        f'({pulse_text} bpm)'
+                    )
+
+
+                    # Create an expandable reading section
+                    with st.expander(
+                        reading_title
+                    ):
+
+                        # Display date
+                        st.write(
+                            f'**Date:** {reading["reading_date"]}'
+                        )
+
+
+                        # Display time when available
+                        if reading["reading_time"]:
+
+                            st.write(
+                                f'**Time:** {reading["reading_time"]}'
+                            )
+
+
+                        # Display blood pressure
+                        st.write(
+                            f'**Blood Pressure:** '
+                            f'{reading["systolic"]}/'
+                            f'{reading["diastolic"]}'
+                        )
+
+
+                        # Display pulse
+                        st.write(
+                            f'**Pulse:** {pulse_text}'
+                        )
+
+
+                        # Display period
+                        if reading["period"]:
+
+                            st.write(
+                                f'**Period:** {reading["period"]}'
+                            )
+
+
+                        # Display notes
+                        if reading["notes"]:
+
+                            st.write(
+                                f'**Notes:** {reading["notes"]}'
+                            )
+
+
+                        # Create Edit and Delete buttons
+                        edit_button_col, delete_button_col = st.columns(2)
+
+
+                        # Edit button
+                        with edit_button_col:
+
+                            if st.button(
+                                "Edit",
+                                key=f"edit_{reading_id}",
+                                width="stretch"
+                            ):
+
+                                # Store the selected reading
+                                st.session_state.editing_reading = reading
+
+                                # Make sure delete mode is cleared
+                                st.session_state.pop(
+                                    "deleting_reading",
+                                    None
+                                )
+
+                                # Refresh the app
+                                st.rerun()
+
+
+                        # Delete button
+                        with delete_button_col:
+
+                            if st.button(
+                                "Delete",
+                                key=f"delete_{reading_id}",
+                                width="stretch"
+                            ):
+
+                                # Store the selected reading
+                                st.session_state.deleting_reading = reading
+
+                                # Make sure edit mode is cleared
+                                st.session_state.pop(
+                                    "editing_reading",
+                                    None
+                                )
+
+                                # Refresh the app
+                                st.rerun()
 
 
             else:
 
-                # Tell the user that no readings exist
+                # Tell the user there are no readings
                 st.info(
                     "No readings have been recorded yet."
                 )
@@ -387,20 +898,22 @@ else:
             )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # DASHBOARD TAB
-    # -----------------------------------------------------
+    # =====================================================
 
     with tab_dashboard:
 
         # Display the dashboard heading
-        st.subheader("Dashboard")
+        st.subheader(
+            "Dashboard"
+        )
 
 
-        # Load the user's readings for future dashboard work
+        # Load this user's readings
         try:
 
-            # Get all readings for this user
+            # Get all readings needed for analysis
             dashboard_response = (
                 supabase
                 .table("readings")
@@ -408,7 +921,10 @@ else:
                     "reading_date, reading_time, "
                     "systolic, diastolic, pulse"
                 )
-                .eq("user_id", user_id)
+                .eq(
+                    "user_id",
+                    user_id
+                )
                 .order(
                     "reading_date"
                 )
@@ -432,7 +948,7 @@ else:
             )
 
 
-            # Show a placeholder until we build the dashboard
+            # Display a temporary message
             st.info(
                 "Dashboard analysis will be added next."
             )
