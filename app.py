@@ -62,13 +62,29 @@ if session is not None:
 
     except Exception:
 
-        # Clear an invalid or expired session
-        st.session_state.pop(
-            "session",
-            None
-        )
+        # The access token may simply be stale; try a refresh
+        # before treating the session as fully expired
+        try:
 
-        session = None
+            refreshed = supabase.auth.refresh_session(
+                session.refresh_token
+            )
+
+            st.session_state.session = refreshed.session
+            session = refreshed.session
+
+        except Exception:
+
+            # Clear an invalid or expired session
+            st.session_state.pop(
+                "session",
+                None
+            )
+
+            # Flag this so the login screen can explain why
+            st.session_state.session_expired = True
+
+            session = None
 
 
 # ---------------------------------------------------------
@@ -80,6 +96,13 @@ if session is None:
 
     # Display the application title
     st.title("Blood Pressure Tracker")
+
+    # Let the user know why they're seeing the login screen again
+    if st.session_state.pop("session_expired", False):
+
+        st.info(
+            "Your session expired. Please log in again."
+        )
 
     # Display the login heading
     st.subheader("Login")
@@ -190,6 +213,83 @@ else:
     )
 
 
+    # -----------------------------------------------------
+    # SHARED VALIDATION HELPERS
+    # -----------------------------------------------------
+
+    # Ranges outside of these are flagged as unusual, not blocked
+    UNUSUAL_SYSTOLIC_RANGE = (90, 180)
+    UNUSUAL_DIASTOLIC_RANGE = (60, 120)
+    UNUSUAL_PULSE_RANGE = (40, 120)
+
+
+    def describe_unusual_values(sys_val, dia_val, pulse_val):
+        """Return a list of human-readable warnings for unusual values."""
+
+        warnings = []
+
+        if not (UNUSUAL_SYSTOLIC_RANGE[0] <= sys_val <= UNUSUAL_SYSTOLIC_RANGE[1]):
+
+            warnings.append(
+                f"Systolic of {sys_val} is outside the typical "
+                f"{UNUSUAL_SYSTOLIC_RANGE[0]}–{UNUSUAL_SYSTOLIC_RANGE[1]} range."
+            )
+
+        if not (UNUSUAL_DIASTOLIC_RANGE[0] <= dia_val <= UNUSUAL_DIASTOLIC_RANGE[1]):
+
+            warnings.append(
+                f"Diastolic of {dia_val} is outside the typical "
+                f"{UNUSUAL_DIASTOLIC_RANGE[0]}–{UNUSUAL_DIASTOLIC_RANGE[1]} range."
+            )
+
+        if not (UNUSUAL_PULSE_RANGE[0] <= pulse_val <= UNUSUAL_PULSE_RANGE[1]):
+
+            warnings.append(
+                f"Pulse of {pulse_val} is outside the typical "
+                f"{UNUSUAL_PULSE_RANGE[0]}–{UNUSUAL_PULSE_RANGE[1]} range."
+            )
+
+        return warnings
+
+
+    # -----------------------------------------------------
+    # MEDICATION TAG HELPERS
+    #
+    # Medication tracking is stored as a small tag prefix on the
+    # existing "notes" field, so no database schema change is needed.
+    # -----------------------------------------------------
+
+    MEDICATION_TAG = "[Meds <8h]"
+
+
+    def add_medication_tag(notes_text, medication_flag):
+        """Fold the medication flag into notes text for saving."""
+
+        clean_notes = notes_text.strip() if notes_text else ""
+
+        if medication_flag:
+
+            combined = f"{MEDICATION_TAG} {clean_notes}".strip()
+
+        else:
+
+            combined = clean_notes
+
+        return combined if combined else None
+
+
+    def split_medication_tag(notes_text):
+        """Return (medication_flag, notes_without_tag) from stored notes."""
+
+        raw_notes = notes_text or ""
+
+        if raw_notes.startswith(MEDICATION_TAG):
+
+            return True, raw_notes[len(MEDICATION_TAG):].strip()
+
+        return False, raw_notes
+
+
     # =====================================================
     # ADD READING TAB
     # =====================================================
@@ -290,13 +390,40 @@ else:
         )
 
 
-        # Use the current time automatically
-        reading_time = st.time_input(
-            "Reading Time",
-            value=datetime.now().time().replace(
-                second=0,
-                microsecond=0
+        # Let the user say the exact time isn't known
+        unknown_time = st.checkbox(
+            "I don't know the exact time",
+            key="add_unknown_time"
+        )
+
+
+        # Only show the time picker when the time is known
+        if unknown_time:
+
+            reading_time = None
+
+        else:
+
+            # Use the current time automatically
+            reading_time = st.time_input(
+                "Reading Time",
+                value=datetime.now().time().replace(
+                    second=0,
+                    microsecond=0
+                )
             )
+
+
+        # -------------------------------------------------
+        # MEDICATION (stored as a tag on notes — no schema change)
+        # -------------------------------------------------
+
+        st.write("")
+
+        # Simple flag, folded into the notes field on save
+        medication_recent = st.checkbox(
+            "Took medication within the last 8 hours",
+            key="add_medication_recent"
         )
 
 
@@ -322,47 +449,97 @@ else:
             width="stretch"
         ):
 
-            try:
+            # Hard validation: systolic must be meaningfully above diastolic
+            if int(systolic) <= int(diastolic):
 
-                # Build the reading record
-                reading = {
-                    "user_id": user_id,
-                    "reading_date": reading_date.isoformat(),
-                    "reading_time": reading_time.strftime(
-                        "%H:%M:%S"
-                    ),
-                    "systolic": int(systolic),
-                    "diastolic": int(diastolic),
-                    "pulse": int(pulse),
-                    "period": period,
-                    "notes": notes.strip() if notes else None
-                }
-
-
-                # Insert the reading into Supabase
-                supabase.table(
-                    "readings"
-                ).insert(
-                    reading
-                ).execute()
-
-
-                # Show a success message
-                st.success(
-                    "Reading saved successfully."
-                )
-
-
-                # Refresh the application
-                st.rerun()
-
-
-            except Exception as e:
-
-                # Display any database error
                 st.error(
-                    f"Could not save reading: {e}"
+                    "Systolic must be higher than diastolic. "
+                    "Please double-check these values."
                 )
+
+            else:
+
+                # Check for unusual (but not impossible) values
+                unusual_warnings = describe_unusual_values(
+                    int(systolic),
+                    int(diastolic),
+                    int(pulse)
+                )
+
+                # If there are unusual values and this isn't a confirmed
+                # save yet, show the warnings and ask for confirmation
+                if unusual_warnings and not st.session_state.get(
+                    "add_confirm_unusual",
+                    False
+                ):
+
+                    for warning_text in unusual_warnings:
+
+                        st.warning(warning_text)
+
+                    st.session_state.add_confirm_unusual = True
+
+                    st.info(
+                        "These values look unusual. Click "
+                        "\"Save Reading\" again to save anyway, or "
+                        "adjust the values above."
+                    )
+
+                else:
+
+                    try:
+
+                        # Build the reading record
+                        reading = {
+                            "user_id": user_id,
+                            "reading_date": reading_date.isoformat(),
+                            "reading_time": (
+                                reading_time.strftime("%H:%M:%S")
+                                if reading_time is not None
+                                else None
+                            ),
+                            "systolic": int(systolic),
+                            "diastolic": int(diastolic),
+                            "pulse": int(pulse),
+                            "period": period,
+                            "notes": add_medication_tag(
+                                notes,
+                                medication_recent
+                            )
+                        }
+
+
+                        # Insert the reading into Supabase
+                        supabase.table(
+                            "readings"
+                        ).insert(
+                            reading
+                        ).execute()
+
+
+                        # Show a success message
+                        st.success(
+                            "Reading saved successfully."
+                        )
+
+
+                        # Clear the unusual-value confirmation flag
+                        st.session_state.pop(
+                            "add_confirm_unusual",
+                            None
+                        )
+
+
+                        # Refresh the application
+                        st.rerun()
+
+
+                    except Exception as e:
+
+                        # Display any database error
+                        st.error(
+                            f"Could not save reading: {e}"
+                        )
 
 
     # =====================================================
@@ -514,19 +691,60 @@ else:
                     )
 
 
-                # Edit time
-                edit_time = st.time_input(
-                    "Reading Time",
-                    value=existing_time,
-                    key="edit_time"
+                # Let the user say the exact time isn't known
+                edit_unknown_time = st.checkbox(
+                    "I don't know the exact time",
+                    value=editing_reading["reading_time"] is None,
+                    key="edit_unknown_time"
                 )
 
 
-                # Edit notes
+                # Only show the time picker when the time is known
+                if edit_unknown_time:
+
+                    edit_time = None
+
+                else:
+
+                    # Edit time
+                    edit_time = st.time_input(
+                        "Reading Time",
+                        value=existing_time,
+                        key="edit_time"
+                    )
+
+
+                # -------------------------------------------------
+                # MEDICATION (tag on notes — no schema change)
+                # -------------------------------------------------
+
+                # Pull the medication flag out of the stored notes
+                existing_medication_flag, existing_notes_clean = (
+                    split_medication_tag(editing_reading["notes"])
+                )
+
+
+                # Edit medication flag
+                edit_medication_recent = st.checkbox(
+                    "Took medication within the last 8 hours",
+                    value=existing_medication_flag,
+                    key="edit_medication_recent"
+                )
+
+
+                # Edit notes (shown without the medication tag)
                 edit_notes = st.text_area(
                     "Notes",
-                    value=editing_reading["notes"] or "",
+                    value=existing_notes_clean,
                     key="edit_notes"
+                )
+
+
+                # Confirmation for unusual values (forms can't do a
+                # separate confirm step mid-submit, so this is opt-in)
+                edit_confirm_unusual = st.checkbox(
+                    "I confirm these values are correct even if unusual",
+                    key="edit_confirm_unusual"
                 )
 
 
@@ -556,59 +774,95 @@ else:
                 # Handle the Save Changes button
                 if save_edit_button:
 
-                    try:
+                    # Hard validation: systolic must exceed diastolic
+                    if int(edit_systolic) <= int(edit_diastolic):
 
-                        # Create the updated reading
-                        updated_reading = {
-                            "reading_date": edit_date.isoformat(),
-                            "reading_time": edit_time.strftime(
-                                "%H:%M:%S"
-                            ),
-                            "systolic": int(edit_systolic),
-                            "diastolic": int(edit_diastolic),
-                            "pulse": int(edit_pulse),
-                            "period": edit_period,
-                            "notes": edit_notes.strip() if edit_notes else None
-                        }
-
-
-                        # Update only this user's reading
-                        supabase.table(
-                            "readings"
-                        ).update(
-                            updated_reading
-                        ).eq(
-                            "id",
-                            editing_reading["id"]
-                        ).eq(
-                            "user_id",
-                            user_id
-                        ).execute()
-
-
-                        # Remove the active edit
-                        st.session_state.pop(
-                            "editing_reading",
-                            None
-                        )
-
-
-                        # Show success message
-                        st.success(
-                            "Reading updated successfully."
-                        )
-
-
-                        # Refresh the app
-                        st.rerun()
-
-
-                    except Exception as e:
-
-                        # Display the update error
                         st.error(
-                            f"Could not update reading: {e}"
+                            "Systolic must be higher than diastolic. "
+                            "Please double-check these values."
                         )
+
+                    else:
+
+                        # Check for unusual (but not impossible) values
+                        edit_unusual_warnings = describe_unusual_values(
+                            int(edit_systolic),
+                            int(edit_diastolic),
+                            int(edit_pulse)
+                        )
+
+                        if edit_unusual_warnings and not edit_confirm_unusual:
+
+                            for warning_text in edit_unusual_warnings:
+
+                                st.warning(warning_text)
+
+                            st.info(
+                                "Check \"I confirm these values are "
+                                "correct even if unusual\" above, then "
+                                "click Save Changes again."
+                            )
+
+                        else:
+
+                            try:
+
+                                # Create the updated reading
+                                updated_reading = {
+                                    "reading_date": edit_date.isoformat(),
+                                    "reading_time": (
+                                        edit_time.strftime("%H:%M:%S")
+                                        if edit_time is not None
+                                        else None
+                                    ),
+                                    "systolic": int(edit_systolic),
+                                    "diastolic": int(edit_diastolic),
+                                    "pulse": int(edit_pulse),
+                                    "period": edit_period,
+                                    "notes": add_medication_tag(
+                                        edit_notes,
+                                        edit_medication_recent
+                                    )
+                                }
+
+
+                                # Update only this user's reading
+                                supabase.table(
+                                    "readings"
+                                ).update(
+                                    updated_reading
+                                ).eq(
+                                    "id",
+                                    editing_reading["id"]
+                                ).eq(
+                                    "user_id",
+                                    user_id
+                                ).execute()
+
+
+                                # Remove the active edit
+                                st.session_state.pop(
+                                    "editing_reading",
+                                    None
+                                )
+
+
+                                # Show success message
+                                st.success(
+                                    "Reading updated successfully."
+                                )
+
+
+                                # Refresh the app
+                                st.rerun()
+
+
+                            except Exception as e:
+
+                                # Display the update error
+                                st.error(
+                                    f"Could not update reading: {e}"
+                                )
 
 
                 # Handle the Cancel button
@@ -762,124 +1016,342 @@ else:
             # Check whether readings exist
             if readings:
 
-                # Display each reading as an expandable item
-                for reading in readings:
+                # -------------------------------------------------
+                # FULL DATA BACKUP (unfiltered, always available)
+                # -------------------------------------------------
 
-                    # Get the reading ID
-                    reading_id = reading["id"]
+                full_backup_df = pd.DataFrame(readings)
+
+                st.download_button(
+                    label="⬇️ Export Everything (Full Backup)",
+                    data=full_backup_df.to_csv(index=False),
+                    file_name=(
+                        f"bp_full_backup_"
+                        f"{date.today().isoformat()}.csv"
+                    ),
+                    mime="text/csv",
+                    width="stretch"
+                )
 
 
-                    # Build the display title
-                    pulse_text = (
-                        str(reading["pulse"])
-                        if reading["pulse"] is not None
-                        else "N/A"
+                st.divider()
+
+
+                # -------------------------------------------------
+                # PERIOD ICONS (used for compact titles below)
+                # -------------------------------------------------
+
+                period_icons = {
+                    "AM": "☀️ AM",
+                    "PM": "🌇 PM",
+                    "Pre-bed": "🌙 Pre-bed"
+                }
+
+
+                # -------------------------------------------------
+                # FILTER / SORT / SEARCH CONTROLS
+                # -------------------------------------------------
+
+                filter_col, sort_col = st.columns(2)
+
+
+                with filter_col:
+
+                    # Filter by reading period
+                    period_filter = st.selectbox(
+                        "Filter by period",
+                        [
+                            "All",
+                            "AM",
+                            "PM",
+                            "Pre-bed"
+                        ],
+                        key="history_period_filter"
                     )
 
 
-                    reading_title = (
-                        f'{reading["reading_date"]} — '
-                        f'{reading["systolic"]}/'
-                        f'{reading["diastolic"]} '
-                        f'({pulse_text} bpm)'
+                with sort_col:
+
+                    # Choose the sort order
+                    sort_order = st.selectbox(
+                        "Sort by",
+                        [
+                            "Newest First",
+                            "Oldest First",
+                            "Highest Systolic",
+                            "Lowest Systolic"
+                        ],
+                        key="history_sort_order"
                     )
 
 
-                    # Create an expandable reading section
-                    with st.expander(
-                        reading_title
-                    ):
+                # Search by a specific date
+                search_by_date = st.checkbox(
+                    "Search by specific date",
+                    key="history_search_toggle"
+                )
 
-                        # Display date
-                        st.write(
-                            f'**Date:** {reading["reading_date"]}'
+
+                search_date = None
+
+                if search_by_date:
+
+                    search_date = st.date_input(
+                        "Date",
+                        key="history_search_date"
+                    )
+
+
+                # -------------------------------------------------
+                # APPLY FILTERS
+                # -------------------------------------------------
+
+                filtered_readings = readings
+
+
+                # Apply the period filter
+                if period_filter != "All":
+
+                    filtered_readings = [
+                        reading
+                        for reading in filtered_readings
+                        if reading["period"] == period_filter
+                    ]
+
+
+                # Apply the date search
+                if search_date is not None:
+
+                    filtered_readings = [
+                        reading
+                        for reading in filtered_readings
+                        if str(reading["reading_date"]) == search_date.isoformat()
+                    ]
+
+
+                # -------------------------------------------------
+                # APPLY SORTING
+                # -------------------------------------------------
+
+                if sort_order == "Newest First":
+
+                    filtered_readings = sorted(
+                        filtered_readings,
+                        key=lambda r: (
+                            r["reading_date"],
+                            r["reading_time"] or ""
+                        ),
+                        reverse=True
+                    )
+
+                elif sort_order == "Oldest First":
+
+                    filtered_readings = sorted(
+                        filtered_readings,
+                        key=lambda r: (
+                            r["reading_date"],
+                            r["reading_time"] or ""
+                        )
+                    )
+
+                elif sort_order == "Highest Systolic":
+
+                    filtered_readings = sorted(
+                        filtered_readings,
+                        key=lambda r: r["systolic"],
+                        reverse=True
+                    )
+
+                elif sort_order == "Lowest Systolic":
+
+                    filtered_readings = sorted(
+                        filtered_readings,
+                        key=lambda r: r["systolic"]
+                    )
+
+
+                # Show how many readings matched
+                st.caption(
+                    f"Showing {len(filtered_readings)} of "
+                    f"{len(readings)} readings"
+                )
+
+
+                # Export just the currently filtered/sorted readings
+                if filtered_readings:
+
+                    filtered_export_df = pd.DataFrame(filtered_readings)
+
+                    st.download_button(
+                        label="Download My Readings (CSV)",
+                        data=filtered_export_df.to_csv(index=False),
+                        file_name=(
+                            f"bp_readings_"
+                            f"{date.today().isoformat()}.csv"
+                        ),
+                        mime="text/csv",
+                        width="stretch"
+                    )
+
+
+                st.write("")
+
+
+                # -------------------------------------------------
+                # DISPLAY THE READINGS
+                # -------------------------------------------------
+
+                if not filtered_readings:
+
+                    # Tell the user nothing matched the filters
+                    st.info(
+                        "No readings match the selected filters."
+                    )
+
+                else:
+
+                    # Display each reading as a compact expandable item
+                    for reading in filtered_readings:
+
+                        # Get the reading ID
+                        reading_id = reading["id"]
+
+
+                        # Build the pulse display text
+                        pulse_text = (
+                            str(reading["pulse"])
+                            if reading["pulse"] is not None
+                            else "N/A"
                         )
 
 
-                        # Display time when available
-                        if reading["reading_time"]:
+                        # Build the period display text
+                        period_text = period_icons.get(
+                            reading["period"],
+                            reading["period"] or "—"
+                        )
 
-                            st.write(
-                                f'**Time:** {reading["reading_time"]}'
-                            )
 
-
-                        # Display blood pressure
-                        st.write(
-                            f'**Blood Pressure:** '
-                            f'{reading["systolic"]}/'
+                        # Build the combined BP display
+                        bp_text = (
+                            f'{reading["systolic"]} / '
                             f'{reading["diastolic"]}'
                         )
 
 
-                        # Display pulse
-                        st.write(
-                            f'**Pulse:** {pulse_text}'
+                        # Pull the medication flag out of stored notes
+                        reading_medication_flag, reading_notes_clean = (
+                            split_medication_tag(reading["notes"])
                         )
 
 
-                        # Display period
-                        if reading["period"]:
+                        # Build the compact, mobile-friendly title
+                        reading_title = (
+                            f'{reading["reading_date"]}  •  '
+                            f'{period_text}  •  '
+                            f'{bp_text}  •  '
+                            f'{pulse_text} bpm'
+                        )
 
-                            st.write(
-                                f'**Period:** {reading["period"]}'
+                        if reading_medication_flag:
+
+                            reading_title += "  •  💊"
+
+
+                        # Create an expandable reading section
+                        with st.expander(
+                            reading_title
+                        ):
+
+                            # Display blood pressure prominently
+                            st.markdown(
+                                f'### {bp_text}'
                             )
 
 
-                        # Display notes
-                        if reading["notes"]:
+                            # Display time when available
+                            if reading["reading_time"]:
 
+                                st.write(
+                                    f'**Time:** {reading["reading_time"]}'
+                                )
+
+
+                            # Display pulse
                             st.write(
-                                f'**Notes:** {reading["notes"]}'
+                                f'**Pulse:** {pulse_text} bpm'
                             )
 
 
-                        # Create Edit and Delete buttons
-                        edit_button_col, delete_button_col = st.columns(2)
+                            # Display period
+                            st.write(
+                                f'**Period:** {period_text}'
+                            )
 
 
-                        # Edit button
-                        with edit_button_col:
+                            # Display medication flag
+                            if reading_medication_flag:
 
-                            if st.button(
-                                "Edit",
-                                key=f"edit_{reading_id}",
-                                width="stretch"
-                            ):
-
-                                # Store the selected reading
-                                st.session_state.editing_reading = reading
-
-                                # Make sure delete mode is cleared
-                                st.session_state.pop(
-                                    "deleting_reading",
-                                    None
+                                st.write(
+                                    "**Medication:** 💊 Taken within "
+                                    "the last 8 hours"
                                 )
 
-                                # Refresh the app
-                                st.rerun()
 
+                            # Display notes (medication tag stripped)
+                            if reading_notes_clean:
 
-                        # Delete button
-                        with delete_button_col:
-
-                            if st.button(
-                                "Delete",
-                                key=f"delete_{reading_id}",
-                                width="stretch"
-                            ):
-
-                                # Store the selected reading
-                                st.session_state.deleting_reading = reading
-
-                                # Make sure edit mode is cleared
-                                st.session_state.pop(
-                                    "editing_reading",
-                                    None
+                                st.write(
+                                    f'**Notes:** {reading_notes_clean}'
                                 )
 
-                                # Refresh the app
-                                st.rerun()
+
+                            # Create Edit and Delete buttons
+                            edit_button_col, delete_button_col = st.columns(2)
+
+
+                            # Edit button
+                            with edit_button_col:
+
+                                if st.button(
+                                    "Edit",
+                                    key=f"edit_{reading_id}",
+                                    width="stretch"
+                                ):
+
+                                    # Store the selected reading
+                                    st.session_state.editing_reading = reading
+
+                                    # Make sure delete mode is cleared
+                                    st.session_state.pop(
+                                        "deleting_reading",
+                                        None
+                                    )
+
+                                    # Refresh the app
+                                    st.rerun()
+
+
+                            # Delete button
+                            with delete_button_col:
+
+                                if st.button(
+                                    "Delete",
+                                    key=f"delete_{reading_id}",
+                                    width="stretch"
+                                ):
+
+                                    # Store the selected reading
+                                    st.session_state.deleting_reading = reading
+
+                                    # Make sure edit mode is cleared
+                                    st.session_state.pop(
+                                        "editing_reading",
+                                        None
+                                    )
+
+                                    # Refresh the app
+                                    st.rerun()
 
 
             else:
@@ -1464,6 +1936,117 @@ else:
                         recent_df,
                         width="stretch",
                         hide_index=True
+                    )
+
+
+                    # -------------------------------------------------
+                    # DOCTOR / APPOINTMENT REPORT
+                    # -------------------------------------------------
+
+                    st.markdown(
+                        "### Doctor / Appointment Report"
+                    )
+
+
+                    # Calculate AM average blood pressure for the report
+                    am_readings = filtered_df[
+                        filtered_df["period"] == "AM"
+                    ]
+
+                    # Calculate PM average blood pressure for the report
+                    pm_readings = filtered_df[
+                        filtered_df["period"] == "PM"
+                    ]
+
+
+                    # Build the report as plain text
+                    report_lines = []
+
+                    report_lines.append("Blood Pressure Summary")
+
+                    report_lines.append(
+                        f"{selected_start.strftime('%m/%d/%Y')} - "
+                        f"{selected_end.strftime('%m/%d/%Y')}"
+                    )
+
+                    report_lines.append("")
+
+                    report_lines.append(
+                        f"Average BP: {average_systolic:.0f} / "
+                        f"{average_diastolic:.0f}"
+                    )
+
+                    if pd.isna(average_pulse):
+
+                        report_lines.append("Average Pulse: N/A")
+
+                    else:
+
+                        report_lines.append(
+                            f"Average Pulse: {average_pulse:.0f}"
+                        )
+
+                    report_lines.append("")
+
+                    if not am_readings.empty:
+
+                        report_lines.append(
+                            f"AM Average: "
+                            f"{am_readings['systolic'].mean():.0f} / "
+                            f"{am_readings['diastolic'].mean():.0f}"
+                        )
+
+                    if not pm_readings.empty:
+
+                        report_lines.append(
+                            f"PM Average: "
+                            f"{pm_readings['systolic'].mean():.0f} / "
+                            f"{pm_readings['diastolic'].mean():.0f}"
+                        )
+
+                    report_lines.append("")
+
+                    report_lines.append(
+                        f"Highest: {maximum_systolic:.0f} / "
+                        f"{maximum_diastolic:.0f}"
+                    )
+
+                    report_lines.append(
+                        f"Lowest: {minimum_systolic:.0f} / "
+                        f"{minimum_diastolic:.0f}"
+                    )
+
+                    report_lines.append("")
+
+                    report_lines.append(
+                        f"{reading_count} total readings"
+                    )
+
+                    report_lines.append("")
+
+                    report_lines.append(
+                        "(See trend chart in the app for a visual "
+                        "reference of this period.)"
+                    )
+
+                    report_text = "\n".join(report_lines)
+
+
+                    # Show a preview of the report
+                    st.text(report_text)
+
+
+                    # Offer the report as a download
+                    st.download_button(
+                        label="Download Doctor Report",
+                        data=report_text,
+                        file_name=(
+                            f"bp_doctor_report_"
+                            f"{selected_start.strftime('%Y%m%d')}_"
+                            f"{selected_end.strftime('%Y%m%d')}.txt"
+                        ),
+                        mime="text/plain",
+                        width="stretch"
                     )
 
         except Exception as e:
